@@ -436,13 +436,11 @@ impl Circuit {
 #[cfg(test)]
 mod solution {
     use super::*;
-    use std::error::Error;
-    use std::fs::read_to_string;
+    use crate::input::get_input::get_input;
 
     #[test]
-    fn get_signal_a() -> Result<(), Box<dyn Error>> {
-        let circuit_instructions = read_to_string("src/input/day7.txt")?;
-        for line in circuit_instructions.lines() {
+    fn get_signal_a() {
+        for line in get_input("wires").unwrap().lines() {
             CIRCUIT.with(|c| c.borrow_mut().connect_wires(line));
         }
         CIRCUIT.with(|c| {
@@ -453,6 +451,5 @@ mod solution {
             }
             assert_eq!(c.borrow().get_signal("a"), 16076);
         });
-        Ok(())
     }
 }
