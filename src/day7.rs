@@ -2,434 +2,281 @@
 /// gates and output wires. I.e. the same two input wires cannot be provided
 /// to 2 different wires.
 use rustc_hash::FxHashMap;
-use std::cell::RefCell;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
-enum InputSource {
-    GateAndWire(String, String),
-    GateAndLiteral(u16, String),
-    GateOr(String, String),
-    GateNot(String),
-    GateRshift(String, i32),
-    GateLshift(String, i32),
-    Wire(String),
+#[derive(Debug)]
+enum WireSource<'a> {
+    GateAndWire(&'a str, &'a str),
+    GateAndLiteral(u16, &'a str),
+    GateOr(&'a str, &'a str),
+    GateNot(&'a str),
+    GateRshift(&'a str, i32),
+    GateLshift(&'a str, i32),
+    Wire(&'a str),
     Signal(u16),
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-struct SourceInfo {
-    source: InputSource,
+#[derive(Debug)]
+struct WireState {
     signal: Option<u16>,
+    /// How many source signals are missing
     missing_source_signals: i32,
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
-struct Wire {
-    source_info: Option<SourceInfo>,
-    supplies: Vec<String>,
-}
-
-thread_local! {
-    static CIRCUIT: RefCell<Circuit> = RefCell::new(Circuit::new());
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-struct Circuit {
-    wires: FxHashMap<String, Wire>,
-    queue: Vec<String>,
+struct Circuit<'a> {
+    /// The source wires for each wire.
+    wires_upstream: FxHashMap<&'a str, WireSource<'a>>,
+    /// The downstream wires for each wire.
+    wires_downstreams: FxHashMap<&'a str, Vec<&'a str>>,
+    /// Mutable state data for each wire.
+    wires_state: FxHashMap<&'a str, WireState>,
+    /// A list of wire identifiers in the order they should be processed.
+    queue: Vec<&'a str>,
+    sorted_up_to: usize,
 }
 
 #[allow(dead_code)]
-impl Circuit {
+impl<'a> Circuit<'a> {
     fn new() -> Self {
         Self {
-            wires: FxHashMap::default(),
+            wires_upstream: FxHashMap::default(),
+            wires_downstreams: FxHashMap::default(),
+            wires_state: FxHashMap::default(),
             queue: Vec::new(),
+            sorted_up_to: 0,
         }
     }
 
-    fn add_wire(&mut self, source: InputSource, identifier: &str) {
-        let source_info = match source {
-            InputSource::GateAndWire(ref input_wire1, ref input_wire2)
-            | InputSource::GateOr(ref input_wire1, ref input_wire2) => {
-                if let Some(input_wire) = self.wires.get_mut(input_wire1) {
-                    input_wire.supplies.push(String::from(identifier));
-                } else {
-                    let mut input_wire = Wire {
-                        source_info: None,
-                        supplies: Vec::new(),
-                    };
-                    input_wire.supplies.push(String::from(identifier));
-                    self.wires.insert(String::from(input_wire1), input_wire);
-                }
-                if let Some(input_wire) = self.wires.get_mut(input_wire2) {
-                    input_wire.supplies.push(String::from(identifier));
-                } else {
-                    let mut input_wire = Wire {
-                        source_info: None,
-                        supplies: Vec::new(),
-                    };
-                    input_wire.supplies.push(String::from(identifier));
-                    self.wires.insert(String::from(input_wire2), input_wire);
-                }
-                SourceInfo {
-                    source,
+    /// Move all wires with a missing signals counter of 0 to the front.
+    fn update_queue(&mut self) {
+        let mut front = self.sorted_up_to;
+        for i in self.sorted_up_to + 1..self.queue.len() {
+            let wire = self.queue[i];
+            let missing_signals = self.wires_state.get(wire).unwrap().missing_source_signals;
+            if missing_signals == 0 {
+                // Swap with front
+                front += 1;
+                let temp = self.queue[front];
+                self.queue[front] = wire;
+                self.queue[i] = temp;
+            }
+        }
+        self.sorted_up_to = front;
+    }
+
+    fn add_wire(&mut self, source: WireSource<'a>, wire: &'a str) {
+        // Populate wire downstreams and get initial wire state
+        let wire_state = match source {
+            WireSource::GateAndWire(source_wire1, source_wire2)
+            | WireSource::GateOr(source_wire1, source_wire2) => {
+                self.wires_downstreams
+                    .entry(source_wire1)
+                    .and_modify(|wire_downstreams| wire_downstreams.push(wire))
+                    .or_insert(vec![wire]);
+                self.wires_downstreams
+                    .entry(source_wire2)
+                    .and_modify(|wire_downstreams| wire_downstreams.push(wire))
+                    .or_insert(vec![wire]);
+                WireState {
                     signal: None,
                     missing_source_signals: 2,
                 }
             }
-            InputSource::GateAndLiteral(_, ref input_wire1)
-            | InputSource::GateNot(ref input_wire1)
-            | InputSource::GateRshift(ref input_wire1, _)
-            | InputSource::GateLshift(ref input_wire1, _)
-            | InputSource::Wire(ref input_wire1) => {
-                if let Some(input_wire) = self.wires.get_mut(input_wire1) {
-                    input_wire.supplies.push(String::from(identifier));
-                } else {
-                    let mut input_wire = Wire {
-                        source_info: None,
-                        supplies: Vec::new(),
-                    };
-                    input_wire.supplies.push(String::from(identifier));
-                    self.wires.insert(String::from(input_wire1), input_wire);
-                }
-                SourceInfo {
-                    source,
+            WireSource::GateAndLiteral(_, source_wire1)
+            | WireSource::GateNot(source_wire1)
+            | WireSource::GateRshift(source_wire1, _)
+            | WireSource::GateLshift(source_wire1, _)
+            | WireSource::Wire(source_wire1) => {
+                self.wires_downstreams
+                    .entry(source_wire1)
+                    .and_modify(|wire_downstreams| wire_downstreams.push(wire))
+                    .or_insert(vec![wire]);
+                WireState {
                     signal: None,
                     missing_source_signals: 1,
                 }
             }
-            InputSource::Signal(signal) => SourceInfo {
-                source,
+            WireSource::Signal(signal) => WireState {
                 signal: Some(signal),
                 missing_source_signals: 0,
             },
         };
-        if let Some(wire) = self.wires.get_mut(identifier) {
-            wire.source_info = Some(source_info);
-        } else {
-            self.wires.insert(
-                String::from(identifier),
-                Wire {
-                    source_info: Some(source_info),
-                    supplies: Vec::new(),
-                },
-            );
-        }
-
-        self.queue.push(String::from(identifier));
+        // Create remaining wire entries
+        self.wires_upstream.insert(wire, source);
+        self.wires_state.insert(wire, wire_state);
+        self.queue.push(wire);
     }
 
-    fn connect_wires(&mut self, s: &str) {
-        // format: input wire -> output wire
-        let mut wires = s.split("->");
-        let mut input_split = wires
-            .next()
-            .unwrap()
-            .strip_suffix(' ')
-            .unwrap()
-            .split(' ')
-            .peekable();
-        let output_wire = wires.next().unwrap().strip_prefix(' ').unwrap();
-        let token1 = input_split.next().unwrap();
-
-        // Branch off token1
-        if token1 == "NOT" {
-            self.add_wire(
-                InputSource::GateNot(String::from(input_split.next().unwrap())),
-                output_wire,
-            );
-            return;
-        } else if let Ok(signal) = token1.parse::<u16>() {
-            if let Some(token2) = input_split.peek() {
-                if *token2 == "AND" {
-                    input_split.next();
-                    self.add_wire(
-                        InputSource::GateAndLiteral(
-                            token1.parse().unwrap(),
-                            String::from(input_split.next().unwrap()),
-                        ),
-                        output_wire,
-                    );
-                    return;
-                }
-            }
-            // Token1 is a signal
-            self.add_wire(InputSource::Signal(signal), output_wire);
-            return;
-        }
-        // Token1 is an input wire, there may not be a token2
-        if let Some(token2) = input_split.next() {
-            match token2 {
-                "RSHIFT" => {
-                    self.add_wire(
-                        InputSource::GateRshift(
-                            String::from(token1),
-                            input_split.next().unwrap().parse::<i32>().unwrap(),
-                        ),
-                        output_wire,
-                    );
-                }
-                "LSHIFT" => {
-                    self.add_wire(
-                        InputSource::GateLshift(
-                            String::from(token1),
-                            input_split.next().unwrap().parse::<i32>().unwrap(),
-                        ),
-                        output_wire,
-                    );
-                }
-                "AND" => {
-                    self.add_wire(
-                        InputSource::GateAndWire(
-                            String::from(token1),
-                            String::from(input_split.next().unwrap()),
-                        ),
-                        output_wire,
-                    );
-                }
-                "OR" => {
-                    self.add_wire(
-                        InputSource::GateOr(
-                            String::from(token1),
-                            String::from(input_split.next().unwrap()),
-                        ),
-                        output_wire,
-                    );
-                }
-                _ => panic!("The sentence could not be parse: {}", s),
-            }
-        } else {
-            self.add_wire(InputSource::Wire(String::from(token1)), output_wire);
-        }
-        self.queue.sort_by(|identifier1, identifier2| {
-            let wire1 = self.wires.get(identifier1).unwrap();
-            let wire2 = self.wires.get(identifier2).unwrap();
-            wire1
-                .source_info
-                .as_ref()
+    fn connect_wires(&mut self, wires: &'a str) {
+        for line in wires.lines() {
+            // line_split: input wire -> output wire
+            let mut line_split = line.split("->");
+            // input_split: [NOT] (wire_ident | literal) (OR | AND | RSHIFT | LSHIFT) (wire_ident | literal)
+            let mut input_split = line_split
+                .next()
                 .unwrap()
+                .strip_suffix(' ')
+                .unwrap()
+                .split(' ')
+                .peekable();
+            let output_wire = line_split.next().unwrap().strip_prefix(' ').unwrap();
+            let token1 = input_split.next().unwrap();
+
+            // Condition branch off token1
+            if token1 == "NOT" {
+                self.add_wire(
+                    WireSource::GateNot(input_split.next().unwrap()),
+                    output_wire,
+                );
+                continue;
+            } else if let Ok(signal) = token1.parse::<u16>() {
+                // If token1 is a literal
+                if let Some(token2) = input_split.peek() {
+                    if *token2 == "AND" {
+                        input_split.next(); // Consume "AND"
+                        self.add_wire(
+                            WireSource::GateAndLiteral(
+                                signal,
+                                input_split.next().unwrap(), // Second source wire
+                            ),
+                            output_wire,
+                        );
+                        continue;
+                    }
+                } else {
+                    // Wire source type is Signal
+                    self.add_wire(WireSource::Signal(signal), output_wire);
+                    continue;
+                }
+            }
+            // Token1 is an input wire identifier
+            if let Some(token2) = input_split.next() {
+                match token2 {
+                    "RSHIFT" => {
+                        self.add_wire(
+                            WireSource::GateRshift(
+                                token1,
+                                input_split.next().unwrap().parse::<i32>().unwrap(),
+                            ),
+                            output_wire,
+                        );
+                    }
+                    "LSHIFT" => {
+                        self.add_wire(
+                            WireSource::GateLshift(
+                                token1,
+                                input_split.next().unwrap().parse::<i32>().unwrap(),
+                            ),
+                            output_wire,
+                        );
+                    }
+                    "AND" => {
+                        self.add_wire(
+                            WireSource::GateAndWire(token1, input_split.next().unwrap()),
+                            output_wire,
+                        );
+                    }
+                    "OR" => {
+                        self.add_wire(
+                            WireSource::GateOr(token1, input_split.next().unwrap()),
+                            output_wire,
+                        );
+                    }
+                    _ => panic!("Invalid line: {}", line),
+                }
+            } else {
+                self.add_wire(WireSource::Wire(token1), output_wire);
+            }
+        }
+        self.queue.sort_unstable_by(|identifier1, identifier2| {
+            let wire1 = self.wires_state.get(identifier1).unwrap();
+            let wire2 = self.wires_state.get(identifier2).unwrap();
+            wire1
                 .missing_source_signals
-                .cmp(&wire2.source_info.as_ref().unwrap().missing_source_signals)
+                .cmp(&wire2.missing_source_signals)
         });
+        for (i, wire) in self.queue.iter().enumerate() {
+            if self.wires_state.get(wire).unwrap().missing_source_signals != 0 {
+                self.sorted_up_to = i - 1;
+                break;
+            }
+        }
     }
 
     fn propagate_signals(&mut self) {
+        // Calculate signal for every wire
         for i in 0..self.queue.len() {
-            assert_eq!(
-                self.wires
-                    .get(&self.queue[i])
-                    .unwrap()
-                    .source_info
-                    .as_ref()
-                    .unwrap()
-                    .missing_source_signals,
-                0
-            );
-            // Get next in queue
-            let identifier = &self.queue[i];
-            let supplies: Vec<String> = {
-                let wire = self.wires.get_mut(identifier).unwrap();
-                wire.supplies.clone()
-            };
+            let wire = self.queue[i];
+            let wire_state = self.wires_state.get(wire).unwrap();
+            // By the time we retrieve a wire from the queue, it should have no missing source signals, i.e.
+            // it should be ready to hold a signal.
+            assert_eq!(wire_state.missing_source_signals, 0);
+            let wire_upstream = self.wires_upstream.get(wire).unwrap();
 
-            for downstream in &supplies {
-                {
-                    let downstream_wire = self.wires.get_mut(downstream).unwrap();
-                    downstream_wire
-                        .source_info
-                        .as_mut()
+            // Calculate wire's signal
+            match wire_upstream {
+                WireSource::GateAndWire(source_wire1, source_wire2) => {
+                    let source_signal1 =
+                        self.wires_state.get(source_wire1).unwrap().signal.unwrap();
+                    let source_signal2 =
+                        self.wires_state.get(source_wire2).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal =
+                        Some(source_signal1 & source_signal2);
+                }
+                WireSource::GateAndLiteral(source_signal1, source_wire2) => {
+                    let source_signal2 =
+                        self.wires_state.get(source_wire2).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal =
+                        Some(source_signal1 & source_signal2);
+                }
+                WireSource::GateOr(source_wire1, source_wire2) => {
+                    let source_signal1 =
+                        self.wires_state.get(source_wire1).unwrap().signal.unwrap();
+                    let source_signal2 =
+                        self.wires_state.get(source_wire2).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal =
+                        Some(source_signal1 | source_signal2);
+                }
+                WireSource::GateNot(source_wire1) => {
+                    let source_signal1: u16 =
+                        self.wires_state.get(source_wire1).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal = Some(!source_signal1);
+                }
+                WireSource::GateRshift(source_wire1, shift) => {
+                    let source_signal1: u16 =
+                        self.wires_state.get(source_wire1).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal = Some(source_signal1 >> shift);
+                }
+                WireSource::GateLshift(source_wire1, shift) => {
+                    let source_signal1: u16 =
+                        self.wires_state.get(source_wire1).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal = Some(source_signal1 << shift);
+                }
+                WireSource::Wire(source_wire1) => {
+                    let source_signal1: u16 =
+                        self.wires_state.get(source_wire1).unwrap().signal.unwrap();
+                    self.wires_state.get_mut(wire).unwrap().signal = Some(source_signal1);
+                }
+                WireSource::Signal(..) => (), // Signal would've been populated when the wire was created.
+            }
+
+            // Decrement missing source signals counter for all downstream wires.
+            if let Some(wire_downstreams) = self.wires_downstreams.get(wire) {
+                for downstream_wire in wire_downstreams {
+                    self.wires_state
+                        .get_mut(downstream_wire)
                         .unwrap()
                         .missing_source_signals -= 1;
                 }
-                let (source_info, missing_signals) = {
-                    let downstream_wire = self.wires.get(downstream).unwrap();
-                    (
-                        downstream_wire.source_info.as_ref().unwrap().clone(),
-                        downstream_wire
-                            .source_info
-                            .as_ref()
-                            .unwrap()
-                            .missing_source_signals,
-                    )
-                };
-
-                if missing_signals == 0 && source_info.signal.is_none() {
-                    match source_info.source {
-                        InputSource::GateAndWire(identifier1, identifier2) => {
-                            let signal1 = self
-                                .wires
-                                .get(&identifier1)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            let signal2 = self
-                                .wires
-                                .get(&identifier2)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(signal1 & signal2);
-                        }
-                        InputSource::GateAndLiteral(signal1, ref identifier2) => {
-                            let signal2 = self
-                                .wires
-                                .get(identifier2)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(signal1 & signal2);
-                        }
-                        InputSource::GateOr(identifier1, identifier2) => {
-                            let signal1 = self
-                                .wires
-                                .get(&identifier1)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            let signal2 = self
-                                .wires
-                                .get(&identifier2)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(signal1 | signal2);
-                        }
-                        InputSource::GateNot(identifier1) => {
-                            let signal1: u16 = self
-                                .wires
-                                .get(&identifier1)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(!signal1);
-                        }
-                        InputSource::GateRshift(identifier1, shift) => {
-                            let signal1: u16 = self
-                                .wires
-                                .get(&identifier1)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(signal1 >> shift);
-                        }
-                        InputSource::GateLshift(identifier1, shift) => {
-                            let signal1: u16 = self
-                                .wires
-                                .get(&identifier1)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(signal1 << shift);
-                        }
-                        InputSource::Wire(identifier1) => {
-                            let signal1: u16 = self
-                                .wires
-                                .get(&identifier1)
-                                .unwrap()
-                                .source_info
-                                .as_ref()
-                                .unwrap()
-                                .signal
-                                .unwrap();
-                            self.wires
-                                .get_mut(downstream)
-                                .unwrap()
-                                .source_info
-                                .as_mut()
-                                .unwrap()
-                                .signal = Some(signal1);
-                        }
-                        _ => (),
-                    }
-                }
+                // Update queue after updating the missing source signals counter.
+                self.update_queue();
             }
-            self.queue.sort_by(|identifier1, identifier2| {
-                let wire1 = self.wires.get(identifier1).unwrap();
-                let wire2 = self.wires.get(identifier2).unwrap();
-                wire1
-                    .source_info
-                    .as_ref()
-                    .unwrap()
-                    .missing_source_signals
-                    .cmp(&wire2.source_info.as_ref().unwrap().missing_source_signals)
-            });
         }
     }
 
-    fn get_signal(&self, identifier: &str) -> u16 {
-        self.wires
-            .get(identifier)
-            .unwrap()
-            .source_info
-            .as_ref()
-            .unwrap()
-            .signal
-            .unwrap()
+    fn get_signal(&self, wire: &str) -> u16 {
+        self.wires_state.get(wire).unwrap().signal.unwrap()
     }
 }
 
@@ -440,16 +287,33 @@ mod solution {
 
     #[test]
     fn get_signal_a() {
-        for line in get_input("wires").unwrap().lines() {
-            CIRCUIT.with(|c| c.borrow_mut().connect_wires(line));
-        }
-        CIRCUIT.with(|c| {
-            assert_eq!(c.borrow().queue.len(), c.borrow().wires.len());
-            c.borrow_mut().propagate_signals();
-            for (identifier, wire) in c.borrow().wires.iter() {
-                dbg!(identifier, wire);
-            }
-            assert_eq!(c.borrow().get_signal("a"), 16076);
-        });
+        let wires = get_input("wires").unwrap();
+
+        let mut circuit = Circuit::new();
+        circuit.connect_wires(&wires);
+
+        assert_eq!(circuit.queue.len(), circuit.wires_upstream.len());
+        assert_eq!(circuit.queue.len(), circuit.wires_state.len());
+        assert_eq!(circuit.queue.len() - 2, circuit.wires_downstreams.len());
+
+        circuit.propagate_signals();
+        assert_eq!(circuit.get_signal("a"), 16076);
+    }
+
+    #[test]
+    fn get_signal_a_2() {
+        let mut wires = get_input("wires").unwrap();
+        let index = wires.find("19138 -> b").unwrap();
+        wires.replace_range(index..index + 10, "16076 -> b");
+
+        let mut circuit = Circuit::new();
+        circuit.connect_wires(&wires);
+
+        assert_eq!(circuit.queue.len(), circuit.wires_upstream.len());
+        assert_eq!(circuit.queue.len(), circuit.wires_state.len());
+        assert_eq!(circuit.queue.len() - 2, circuit.wires_downstreams.len());
+
+        circuit.propagate_signals();
+        assert_eq!(circuit.get_signal("a"), 2797);
     }
 }
