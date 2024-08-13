@@ -8,19 +8,14 @@ use rustc_hash::FxHashMap;
 fn is_nice_string(s: &str) -> bool {
     let mut vowel_count = 0;
     let mut double_letter: bool = false;
-    for chunk in s
-        .as_bytes()
-        .windows(2)
-        // SAFETY: chunk length (2) is equal to window length (2)
-        .map(|w| unsafe { w.as_chunks_unchecked::<2>()[0] })
-    {
+    for chunk in s.as_bytes().array_windows::<2>() {
         if vowel_count < 3 && VOWELS.contains(&chunk[0]) {
             vowel_count += 1;
         }
         if !double_letter {
             double_letter = chunk[0] == chunk[1];
         }
-        if FORBIDDEN.contains(&chunk) {
+        if FORBIDDEN.contains(chunk) {
             return false;
         }
     }
@@ -39,12 +34,7 @@ fn is_nice_string2(s: &str) -> bool {
     let mut found_pairs = false;
     let mut pairs: FxHashMap<&[u8; 2], usize> = FxHashMap::default();
 
-    for chunk in s
-        .as_bytes()
-        .windows(3)
-        // SAFETY: chunk length (3) is equal to window length (3)
-        .map(|w| unsafe { w.as_chunks_unchecked::<3>()[0] })
-    {
+    for chunk in s.as_bytes().array_windows::<3>() {
         if !repeat_letters {
             repeat_letters = chunk[0] == chunk[2];
             if found_pairs {
