@@ -1,5 +1,5 @@
 #[allow(dead_code)]
-static INPUT: &str = "1113122113";
+const INPUT: &str = "1113122113";
 
 #[allow(dead_code)]
 fn look_and_say(sequence: &str) -> String {
