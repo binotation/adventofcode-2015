@@ -1,9 +1,9 @@
 #[allow(dead_code)]
-static CURRENT_PASSWORD: &str = "cqjxjnds";
+const CURRENT_PASSWORD: &str = "cqjxjnds";
 
-static FORBIDDEN: [u8; 3] = [105, 108, 111];
+const FORBIDDEN: [u8; 3] = [105, 108, 111];
 
-static ALPHABET: [u8; 23] = [
+const ALPHABET: [u8; 23] = [
     97, 98, 99, 100, 101, 102, 103, 104, 106, 107, 109, 110, 112, 113, 114, 115, 116, 117, 118,
     119, 120, 121, 122,
 ];
