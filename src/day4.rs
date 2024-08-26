@@ -6,17 +6,18 @@ const SECRET: &str = "ckczppom";
 #[allow(dead_code)]
 fn find_first_hash_with_condition(secret: &str, condition: impl Fn(&[u8]) -> bool) -> u64 {
     let mut count: u64 = 0;
+    let mut msg = String::from(secret);
 
     while {
-        let mut hasher = Md5::new();
-        let mut msg = String::from(secret);
         msg.push_str(&count.to_string());
 
-        hasher.update(msg.into_bytes());
+        let mut hasher = Md5::new();
+        hasher.update(msg.as_bytes());
         let hash = hasher.finalize();
 
         !condition(&hash)
     } {
+        msg.truncate(secret.len());
         count += 1;
     }
     count
