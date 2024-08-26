@@ -26,7 +26,11 @@ fn calculate_required_ribbon(presents: &str) -> i64 {
     let mut total = 0;
     for present in presents.lines() {
         let dims = decompose_present_dimensions(present);
-        let (longest_side, _) = dims.iter().enumerate().max_by_key(|(_, &v)| v).unwrap();
+        let (longest_side, _) = dims
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, &side_length)| side_length)
+            .unwrap();
         // Add length of 2 shortest sides twice
         for (side, length) in dims.iter().enumerate() {
             if side == longest_side {
@@ -47,10 +51,8 @@ mod solution {
     #[test]
     fn decompose_test() {
         let s: &str = "24x25x17";
-        let [l, w, h] = decompose_present_dimensions(s);
-        assert_eq!(l, 24);
-        assert_eq!(w, 25);
-        assert_eq!(h, 17);
+        let dims = decompose_present_dimensions(s);
+        assert_eq!(dims, [24, 25, 17]);
     }
 
     #[test]
