@@ -8,68 +8,69 @@ use rustc_hash::FxHashMap;
 fn is_nice_string(s: &str) -> bool {
     let mut vowel_count = 0;
     let mut double_letter: bool = false;
-    for chunk in s.as_bytes().array_windows::<2>() {
-        if vowel_count < 3 && VOWELS.contains(&chunk[0]) {
+    for window in s.as_bytes().array_windows::<2>() {
+        if vowel_count < 3 && VOWELS.contains(&window[0]) {
             vowel_count += 1;
         }
         if !double_letter {
-            double_letter = chunk[0] == chunk[1];
+            double_letter = window[0] == window[1];
         }
-        if FORBIDDEN.contains(chunk) {
+        if FORBIDDEN.contains(window) {
             return false;
         }
     }
-    // Check last char is vowel
+    // Check if last byte is a vowel
     if VOWELS.contains(&s.bytes().last().unwrap()) {
         vowel_count += 1;
     }
     vowel_count > 2 && double_letter
 }
 
-/// O(3N) where N is the length of s
 #[allow(dead_code)]
 #[inline(always)]
 fn is_nice_string2(s: &str) -> bool {
     let mut repeat_letters = false;
     let mut found_pairs = false;
+    // Record byte pairs and their index
     let mut pairs: FxHashMap<&[u8; 2], usize> = FxHashMap::default();
 
-    for chunk in s.as_bytes().array_windows::<3>() {
+    for window in s.as_bytes().array_windows::<3>() {
         if !repeat_letters {
-            repeat_letters = chunk[0] == chunk[2];
+            repeat_letters = window[0] == window[2];
             if found_pairs {
                 break;
             }
         }
     }
-    // Look for identical chunks
+    // Look for identical pairs
     // SAFETY: str length (16) is divisible by chunk length (2)
-    for (mut i, chunk) in unsafe { s.as_bytes().as_chunks_unchecked::<2>().iter().enumerate() } {
-        i *= 2;
-        if pairs.contains_key(chunk) {
+    for (i, pair) in unsafe { s.as_bytes().as_chunks_unchecked::<2>().iter().enumerate() } {
+        let i = i * 2;
+        if pairs.contains_key(pair) {
             found_pairs = true;
             break;
         } else {
-            pairs.insert(chunk, i);
+            pairs.insert(pair, i);
         }
     }
-    // View chunks offset +1, look for identical chunks and ensure the difference in their index is >1.
+    // View chunks offset +1, look for identical pairs and ensure the difference in their index is >1.
     if !found_pairs {
         // SAFETY: str length (14) is divisible by chunk length (2)
-        for (mut i, chunk) in unsafe {
+        for (i, pair) in unsafe {
             s.as_bytes()[1..15]
                 .as_chunks_unchecked::<2>()
                 .iter()
                 .enumerate()
         } {
-            i = i * 2 + 1;
-            if let Some(prev_i) = pairs.get(chunk) {
+            let i = i * 2 + 1;
+            if let Some(prev_i) = pairs.get(pair) {
+                // If pair was previously found and index difference is >1
                 found_pairs = (i as i32 - (*prev_i as i32)).abs() > 1;
                 if found_pairs {
                     break;
                 }
             } else {
-                pairs.insert(chunk, i);
+                pairs.insert(pair, i);
             }
         }
     }
@@ -84,20 +85,22 @@ mod solution {
     #[test]
     fn count_nice_strings() {
         let strings = get_input("strings").unwrap();
-        let mut count = 0;
-        for line in strings.lines() {
+        let count = strings.lines().fold(0, |count, line| {
             if is_nice_string(line) {
-                count += 1;
+                count + 1
+            } else {
+                count
             }
-        }
+        });
         assert_eq!(count, 238);
 
-        count = 0;
-        for line in strings.lines() {
+        let count = strings.lines().fold(0, |count, line| {
             if is_nice_string2(line) {
-                count += 1;
+                count + 1
+            } else {
+                count
             }
-        }
+        });
         assert_eq!(count, 69);
     }
 
