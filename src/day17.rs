@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 #[allow(dead_code)]
-fn container_combinations(
+fn count_container_combinations(
     containers: &[i32],
     remaining_eggnog: i32,
     count: &mut i32,
@@ -24,7 +24,7 @@ fn container_combinations(
             Ordering::Greater => {
                 // There is remaining eggnog to fit, recurse on remaining containers
                 *depth += 1;
-                container_combinations(
+                count_container_combinations(
                     &containers[(i + 1)..],
                     remaining_eggnog - container,
                     count,
@@ -44,14 +44,14 @@ mod solution {
     use crate::input::get_input::get_input;
 
     #[test]
-    fn container_combinations_simple() {
+    fn count_container_combinations_simple() {
         let containers: Vec<i32> = vec![20, 15, 10, 5, 5];
         let mut count = 0;
         let mut depth = 1;
         let min_depth_known = 2;
         let mut min_depth = i32::MAX;
         let mut min_depth_count = 0;
-        super::container_combinations(
+        super::count_container_combinations(
             &containers,
             25,
             &mut count,
@@ -66,7 +66,7 @@ mod solution {
     }
 
     #[test]
-    fn container_combinations() {
+    fn count_container_combinations() {
         let containers = get_input("containers").unwrap();
         let containers: Vec<i32> = containers.lines().map(|v| v.parse().unwrap()).collect();
         let mut count = 0;
@@ -74,7 +74,7 @@ mod solution {
         let min_depth_known = 4;
         let mut min_depth = i32::MAX;
         let mut min_depth_count = 0;
-        super::container_combinations(
+        super::count_container_combinations(
             &containers,
             150,
             &mut count,
