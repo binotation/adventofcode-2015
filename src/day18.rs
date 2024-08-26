@@ -1,3 +1,4 @@
+//! This is essentially game of life.
 use std::str::FromStr;
 
 #[allow(dead_code)]
