@@ -1,4 +1,3 @@
-/// This one was lame.
 use rustc_hash::{FxHashMap, FxHashSet};
 
 struct Elements<'a> {
