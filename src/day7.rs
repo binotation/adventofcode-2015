@@ -1,6 +1,5 @@
-/// From some analysis of the text, there is a 1-1 mapping between
-/// gates and output wires. I.e. the same two input wires cannot be provided
-/// to 2 different wires.
+//! The solution here basically involves putting every wire on a queue sorted by how many signals it's missing.
+//! We then take all the wires with no missing signals off the queue, propagate their signals, re-sort the queue and repeat.
 use rustc_hash::FxHashMap;
 
 #[allow(dead_code)]
