@@ -1,4 +1,4 @@
-/// This one needs to be compiled in release mode.
+//! Compile in release mode.
 use rustc_hash::FxHashSet;
 
 #[allow(dead_code)]
