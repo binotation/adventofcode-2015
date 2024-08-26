@@ -12,7 +12,7 @@ fn find_floor(directions: &str) -> i32 {
 }
 
 #[allow(dead_code)]
-fn find_basement_pos(directions: &str) -> usize {
+fn find_basement_pos(directions: &str) -> Option<usize> {
     let mut floor = 0;
     for (i, c) in directions.bytes().enumerate() {
         match c {
@@ -21,10 +21,10 @@ fn find_basement_pos(directions: &str) -> usize {
             _ => (),
         }
         if floor == -1 {
-            return i + 1;
+            return Some(i + 1);
         }
     }
-    directions.len() + 1
+    None
 }
 
 #[cfg(test)]
@@ -38,7 +38,7 @@ mod solution {
         let floor = find_floor(&directions);
         assert_eq!(floor, 232);
 
-        let basement_pos = find_basement_pos(&directions);
+        let basement_pos = find_basement_pos(&directions).unwrap();
         assert_eq!(basement_pos, 1783);
     }
 }
